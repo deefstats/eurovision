@@ -6,13 +6,37 @@ library(plyr)
 library(ggplot2)
 library(ggmap)
 library(reshape)
+library(grid)
 
 # Define our visualisation parameters
+
+# Draw scores greater than and equal to DrawAllor12
 DrawAllor12 = 1
-widthOutputBase = 2
+
+# Actually draw the map? Used for testing world drawing
 DrawTheLines = 1
-# Draw the map
-# Zoom on top left 67.283836, -27.263098 to bottom right 28.098918, 63.615808
+DrawThePies = 0
+
+# How many points between the start and finish?
+numberOfPoints = 60
+
+# Background Colours
+colourBackground = "#404040"
+
+# Country Colours
+colourCountry = "#757575"
+colourCountryBorders = colourCountry
+
+# Start line colour
+colourLow = "#505050"
+
+# End line colours
+colourHigh1 = "#00FF00"
+colourHigh2 = "#FFFF00"
+
+widthOutputBase = 0.55
+
+# Zoom on Europe
 mapxLeft = -38
 mapxRight = 100
 mapyBottom = 26
@@ -38,12 +62,14 @@ voteTable$Vote.To <- gsub("\\."," ",voteTable$Vote.To)
 #voteTable$Vote.To <- replace(voteTable$voteTo,
 
 # Sort the data
+# Need to sort it by biggest total vote score countries in the country To column, or it draws lines into
+# biggest countries last, with highest vote scores last within the country
 voteTable = voteTable[order(voteTable$value),]
 
 # Remove NA rows
 voteTable <- na.omit(voteTable)
-if (DrawAllor12 > 1) {
-	voteTable <- subset(voteTable, value == 12)
+if (DrawAllor12 < 12) {
+	voteTable <- subset(voteTable, value >= DrawAllor12)
 }
 
 # Now we have a nice dataset
@@ -90,7 +116,7 @@ cat(paste0("Width=", windowWidth, ", Height=", windowHeight," (Ratio of ",ceilin
 
 p <- ggplot()
 #p <- p + theme_nothing(legend = FALSE)
-p <- p + theme(panel.background = element_rect(fill="#404040"))
+p <- p + theme(panel.background = element_rect(fill=colourBackground))
 p <- p + theme(line = element_line(color="#505050",linetype="dotted"))
 p <- p + theme(panel.grid.minor.x=element_blank(),panel.grid.major.x=element_blank())
 p <- p + theme(panel.grid.minor.y=element_blank(),panel.grid.major.y=element_blank())
@@ -100,19 +126,16 @@ p <- p + theme(axis.ticks=element_blank())
 p <- p + theme(legend.position = "none")
 p <- p + coord_map()
 p <- p + coord_cartesian(xlim=c(mapxLeft, mapxRight),ylim=c(mapyBottom, mapyTop))
-p <- p + geom_polygon(aes(long,lat,group=group),data=w,fill="#757575",color="#757575",size=0.2)
+p <- p + geom_polygon(aes(long,lat,group=group),data=w,fill=colourCountry,color=colourCountryBorders,size=0.2)
 #p <- p + scale_colour_gradient(low="#4040AA",high="#00FF00",guide = FALSE)
-#breaksA <- c(0,32,33,64)
-#coloursA <- c("#4040AA","#00FF00","#AA4040","#FFFF00")
-coloursA <- c("#404040","#00FF00","#404040","#FFFF00")
-valuesA <- c(0,0.5,0.50001,1)
-#pal <- colorRampPalette(c("#FFFFFF", "#CACA20"))
-#colours <- pal(100)
-#p <- p + scale_colour_gradient(low="#AA4040",high="#FFFF00",guide = FALSE)
-p <- p + scale_colour_gradientn(colours = coloursA,values=valuesA,breaks=breaksA,guide = FALSE)
 
-# Let's draw our lines!
-if (DrawTheLines == 1) {
+coloursA <- c(colourLow,colourHigh1,colourLow,colourHigh2)
+valuesA <- c(0,0.5,0.50001,1)
+#p <- p + scale_colour_gradient(low="#AA4040", high="#FFFF00", guide = FALSE)
+p <- p + scale_colour_gradientn(colours=coloursA, values=valuesA, guide=FALSE)
+
+# Let's draw
+if (DrawTheLines == 1 || DrawThePies == 1) {
 	for (i in 1:nrow(voteTable)) {
 		voteFrom = as.character(voteTable[i,"Vote.From"])
 		voteTo = as.character(voteTable[i,"Vote.To"])
@@ -123,26 +146,40 @@ if (DrawTheLines == 1) {
 		fromLon = countryList$lon[countryList$Country == voteFrom]
 		toLat = countryList$lat[countryList$Country == voteTo]
 		toLon = countryList$lon[countryList$Country == voteTo]
+
+		if (DrawTheLines == 1) {
 	
-		points = as.data.frame(gcIntermediate(c(fromLon, fromLat), c(toLon, toLat), 30, addStartEnd=TRUE, breakAtDateLine = T))
-		# Sort our visualisation
+			points = as.data.frame(gcIntermediate(c(fromLon, fromLat), c(toLon, toLat), numberOfPoints, addStartEnd=TRUE, breakAtDateLine = T))
+		
+			# Sort our visualisation
+			if (voteType == "Jury") {
+				# Blue to green
+				points[, "id"] <- 1:nrow(points)
+			} else {
+				# Red to yellow
+				points[, "id"] <- (1:nrow(points))+(numberOfPoints+2)
+			}
+		
+			maxAlphaScore = 100 + numberOfPoints + 2
+			points[, "lwidth"] <- as.double(101:maxAlphaScore)
+
+			points$lwidth <- (((((points$lwidth / 100) - 1) / (numberOfPoints+2)) * 100 ) * voteScore ) / 12
+			#points[1,"lwidth"] = 1
 	
-		if (voteType == "Jury") {
-			# Blue to green
-			points[, "id"] <- 1:nrow(points)
-			#gradientAdd = 0
-		} else {
-			# Red to yellow
-			points[, "id"] <- (1:nrow(points))+32
-			#gradientAdd = 32
+			widthOutput = widthOutputBase * voteScore / 12
+			#alphaIndex = voteScore / 12
+	
+			#cat(paste0(i," - ",voteFrom," -> ",voteScore," -> ",voteTo," of type ",voteType," ",colourOutput),"\n")
+	
+			p <- p + geom_path(
+				data=points,
+				aes(x=lon,y=lat,color=id,alpha=lwidth),
+				size=widthOutput,
+				#alpha=alphaIndex,
+				lineend="round"
+				#arrow=arrow(angle=10,ends="last",length=unit(0.1,"cm"),type="open")
+			)
 		}
-	
-		widthOutput = widthOutputBase
-		alphaIndex = voteScore / 12
-	
-		#cat(paste0(i," - ",voteFrom," -> ",voteScore," -> ",voteTo," of type ",voteType," ",colourOutput),"\n")
-	
-		p <- p + geom_path(data=points, aes(x=lon,y=lat,color=id), size=widthOutput*0.1, alpha=alphaIndex, lineend="round")
 	}
 }
 
